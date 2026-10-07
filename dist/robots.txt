@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://open-model-atlas.molanlin0818.chatgpt.site/sitemap.xml

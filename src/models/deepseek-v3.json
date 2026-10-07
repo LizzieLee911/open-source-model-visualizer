@@ -1,0 +1,742 @@
+{
+  "id": "deepseek-v3",
+  "name": "DeepSeek-V3",
+  "company": "DeepSeek",
+  "color": "#4d6bfe",
+  "family": "MLA + MoE",
+  "tagline": "把671B拆到每个专家与每个矩阵。",
+  "checkpoint": "deepseek-ai/DeepSeek-V3",
+  "license": "代码 MIT；权重 DeepSeek Model License",
+  "summary": "61层主干结合MLA和稀疏专家网络。每个token选择8个路由专家，另有1个共享专家。",
+  "scope": "原版V3主干；包含路由修正值，排除MTP和FP8量化元数据。",
+  "totalParams": 671026419200,
+  "totalLabel": "671.03B",
+  "activeLabel": "约37B / token",
+  "sources": [
+    {
+      "label": "官方模型实现",
+      "url": "https://github.com/deepseek-ai/DeepSeek-V3/blob/9b4e9788e4a3a731f7567338ed15d3ec549ce03b/inference/model.py",
+      "revision": "9b4e9788e4a3a731f7567338ed15d3ec549ce03b",
+      "usedFor": "MLA、FFN、router、norm与主干数据流"
+    },
+    {
+      "label": "官方checkpoint配置",
+      "url": "https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/e815299b0bcbac849fa540c768ef21845365c9eb/config.json",
+      "revision": "e815299b0bcbac849fa540c768ef21845365c9eb",
+      "usedFor": "层数与所有维度"
+    },
+    {
+      "label": "技术报告",
+      "url": "https://arxiv.org/html/2412.19437v2",
+      "revision": "v2",
+      "usedFor": "MTP共享与671B/37B定义"
+    }
+  ],
+  "facts": [
+    {
+      "label": "主干block",
+      "value": "61 = 3 dense + 58 MoE"
+    },
+    {
+      "label": "hidden width",
+      "value": "7168"
+    },
+    {
+      "label": "Attention heads",
+      "value": "128"
+    },
+    {
+      "label": "每层专家",
+      "value": "256 routed + 1 shared"
+    }
+  ],
+  "modules": [
+    {
+      "id": "tokens",
+      "name": "输入 token IDs",
+      "repeat": "×1",
+      "kind": "main",
+      "summary": "Tokenizer 输出整数 ID，不属于模型权重。",
+      "flow": [
+        {
+          "label": "文本 → tokenizer",
+          "shape": "[B,T]",
+          "detail": "B=batch；T=本次输入长度；S=可见 KV 长度"
+        }
+      ],
+      "weights": [],
+      "notes": [],
+      "branches": [],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "id": "embedding",
+      "name": "Token embedding",
+      "repeat": "×1",
+      "kind": "main",
+      "summary": "129,280 个词表位置，每个位置存储 7,168 个数。",
+      "flow": [
+        {
+          "label": "查表 W [129280,7168]",
+          "shape": "[B,T,7168]",
+          "detail": "926,679,040 参数；与 LM head 不共享"
+        }
+      ],
+      "weights": [
+        {
+          "name": "Token embedding / model.embed_tokens.weight",
+          "shape": [
+            129280,
+            7168
+          ],
+          "count": 1,
+          "category": "embedding",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        }
+      ],
+      "notes": [],
+      "branches": [],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "id": "dense-block",
+      "name": "Dense Transformer block",
+      "repeat": "×3 · layers.0–2",
+      "kind": "main",
+      "summary": "每层 583,483,392 参数；残差宽度 7168。",
+      "flow": [
+        {
+          "label": "h → RMSNorm → MLA",
+          "shape": "[B,T,7168]",
+          "detail": "h′ = h + MLA(RMSNorm(h))"
+        },
+        {
+          "label": "h′ → RMSNorm → Dense SwiGLU",
+          "shape": "[B,T,7168]",
+          "detail": "h_out = h′ + FFN(RMSNorm(h′))"
+        }
+      ],
+      "weights": [],
+      "notes": [
+        "三层结构相同，权重独立。Attention 与 FFN 的参数分别在下方展开，避免重复计账。"
+      ],
+      "branches": [],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "id": "moe-block",
+      "name": "MoE Transformer block",
+      "repeat": "×58 · layers.3–60",
+      "kind": "main",
+      "summary": "每层 11,507,286,272 参数；每层256路由专家+1共享专家。",
+      "flow": [
+        {
+          "label": "h → RMSNorm → MLA",
+          "shape": "[B,T,7168]",
+          "detail": "第一次残差相加"
+        },
+        {
+          "label": "h′ → RMSNorm → DeepSeekMoE",
+          "shape": "[B,T,7168]",
+          "detail": "第二次残差相加"
+        }
+      ],
+      "weights": [],
+      "notes": [
+        "同层专家独立；跨层也不共享专家权重。"
+      ],
+      "branches": [],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "id": "final-norm",
+      "name": "Final RMSNorm",
+      "repeat": "×1",
+      "kind": "main",
+      "summary": "γ [7168]，无 beta。",
+      "flow": [
+        {
+          "label": "x / √(mean(x²)+10⁻⁶) ⊙ γ",
+          "shape": "[B,T,7168]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "Final RMSNorm / model.norm.weight",
+          "shape": [
+            7168
+          ],
+          "count": 1,
+          "category": "final_norm",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        }
+      ],
+      "notes": [],
+      "branches": [],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "id": "head",
+      "name": "LM head → next token",
+      "repeat": "×1",
+      "kind": "main",
+      "summary": "独立的输出矩阵，不与输入 embedding 绑定。",
+      "flow": [
+        {
+          "label": "Linear 7168 → 129280",
+          "shape": "[B,T,129280]",
+          "detail": "W [129280,7168]，无 bias"
+        },
+        {
+          "label": "采样下一个 token",
+          "shape": "[B]",
+          "detail": "官方推理脚本只对最后位置算 head，返回 [B,129280]"
+        }
+      ],
+      "weights": [
+        {
+          "name": "LM head (untied) / lm_head.weight",
+          "shape": [
+            129280,
+            7168
+          ],
+          "count": 1,
+          "category": "head",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        }
+      ],
+      "notes": [],
+      "branches": [],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "id": "mla",
+      "name": "MLA 潜在注意力",
+      "repeat": "×61",
+      "kind": "detail",
+      "summary": "每层187,107,328参数；128 heads，Q/K每头192维，V每头128维。",
+      "flow": [
+        {
+          "label": "Q·Kᵀ × scale + causal mask → softmax",
+          "shape": "[B,128,T,S]",
+          "detail": "scale 包含 YaRN 调整；RoPE、mask、softmax均无可训练参数"
+        },
+        {
+          "label": "attention × V → concat heads",
+          "shape": "[B,T,16384]",
+          "detail": ""
+        },
+        {
+          "label": "o_proj / wo → 7168",
+          "shape": "[B,T,7168]",
+          "detail": "W [7168,16384]；117,440,512 参数"
+        }
+      ],
+      "weights": [
+        {
+          "name": "Q down / wq_a / self_attn.q_a_proj.weight",
+          "shape": [
+            1536,
+            7168
+          ],
+          "count": 61,
+          "category": "attention",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "Q latent RMSNorm / self_attn.q_a_layernorm.weight",
+          "shape": [
+            1536
+          ],
+          "count": 61,
+          "category": "attention",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "Q up / wq_b / self_attn.q_b_proj.weight",
+          "shape": [
+            24576,
+            1536
+          ],
+          "count": 61,
+          "category": "attention",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "KV down + K RoPE / wkv_a / self_attn.kv_a_proj_with_mqa.weight",
+          "shape": [
+            576,
+            7168
+          ],
+          "count": 61,
+          "category": "attention",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "KV latent RMSNorm / self_attn.kv_a_layernorm.weight",
+          "shape": [
+            512
+          ],
+          "count": 61,
+          "category": "attention",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "KV up / wkv_b / self_attn.kv_b_proj.weight",
+          "shape": [
+            32768,
+            512
+          ],
+          "count": 61,
+          "category": "attention",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "Attention output / wo / self_attn.o_proj.weight",
+          "shape": [
+            7168,
+            16384
+          ],
+          "count": 61,
+          "category": "attention",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        }
+      ],
+      "notes": [
+        "Q/K head_dim=128+64，不是7168/128。",
+        "展开路径物化 K/V；官方默认 absorb 路径代数重排同一组矩阵，不增加参数。",
+        "KV cache 每token每层为512维latent+64维位置K；cache是运行状态，不是模型参数。",
+        "q_lora_rank 是模型本体的低秩设计，不是外加微调adapter。"
+      ],
+      "branches": [
+        {
+          "name": "Query 分支",
+          "steps": [
+            {
+              "label": "Q down / wq_a",
+              "shape": "7168 → 1536",
+              "detail": "W [1536,7168]；11,010,048参数"
+            },
+            {
+              "label": "RMSNorm γ [1536]",
+              "shape": "[B,T,1536]"
+            },
+            {
+              "label": "Q up / wq_b",
+              "shape": "1536 → 24576",
+              "detail": "W [24576,1536]；37,748,736参数"
+            },
+            {
+              "label": "reshape + split",
+              "shape": "[B,T,128,128] + [B,T,128,64]",
+              "detail": "前128维无RoPE；后64维做RoPE，concat Q为192维"
+            }
+          ]
+        },
+        {
+          "name": "Key / Value 分支",
+          "steps": [
+            {
+              "label": "KV down + 位置K / wkv_a",
+              "shape": "7168 → 576 = 512+64",
+              "detail": "W [576,7168]；4,128,768参数"
+            },
+            {
+              "label": "latent RMSNorm γ [512]",
+              "shape": "[B,T,512]",
+              "detail": "另一路64维K做RoPE并在128heads之间共享"
+            },
+            {
+              "label": "KV up / wkv_b",
+              "shape": "512 → 32768",
+              "detail": "W [32768,512]；16,777,216参数"
+            },
+            {
+              "label": "拆分每头内容K、V",
+              "shape": "[B,T,128,128] ×2",
+              "detail": "内容K拼接共享64维位置K → K [B,T,128,192]；V保持128维"
+            }
+          ]
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "parentId": "dense-block"
+    },
+    {
+      "id": "dense-ffn",
+      "name": "Dense SwiGLU FFN",
+      "repeat": "×3",
+      "kind": "detail",
+      "summary": "每层396,361,728参数。",
+      "flow": [
+        {
+          "label": "SiLU(gate_proj(x)) ⊙ up_proj(x)",
+          "shape": "[B,T,18432]",
+          "detail": ""
+        },
+        {
+          "label": "down_proj",
+          "shape": "[B,T,7168]",
+          "detail": "W [7168,18432]；各Linear均无bias"
+        }
+      ],
+      "weights": [
+        {
+          "name": "Dense gate / w1 / mlp.gate_proj.weight",
+          "shape": [
+            18432,
+            7168
+          ],
+          "count": 3,
+          "category": "dense",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "Dense up / w3 / mlp.up_proj.weight",
+          "shape": [
+            18432,
+            7168
+          ],
+          "count": 3,
+          "category": "dense",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "Dense down / w2 / mlp.down_proj.weight",
+          "shape": [
+            7168,
+            18432
+          ],
+          "count": 3,
+          "category": "dense",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        }
+      ],
+      "notes": [
+        "gate_proj 是 SwiGLU 的门控投影，不是 MoE router。"
+      ],
+      "branches": [
+        {
+          "name": "门控支路",
+          "steps": [
+            {
+              "label": "w1 / gate_proj",
+              "shape": "7168 → 18432",
+              "detail": "W [18432,7168] → SiLU"
+            }
+          ]
+        },
+        {
+          "name": "内容支路",
+          "steps": [
+            {
+              "label": "w3 / up_proj",
+              "shape": "7168 → 18432",
+              "detail": "W [18432,7168]，与门控输出逐元素相乘"
+            }
+          ]
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "parentId": "dense-block"
+    },
+    {
+      "id": "moe",
+      "name": "DeepSeekMoE 路由与专家",
+      "repeat": "×58",
+      "kind": "detail",
+      "summary": "每层11,320,164,608参数；其中257个专家各44,040,192参数。",
+      "flow": [
+        {
+          "label": "Router linear → sigmoid",
+          "shape": "[B·T,256]",
+          "detail": "W [256,7168]；1,835,008参数"
+        },
+        {
+          "label": "加 correction bias，只用于选择",
+          "shape": "[B·T,8,32]",
+          "detail": "每组修正分数top-2之和，挑top-4组"
+        },
+        {
+          "label": "在保留组中选 top-8 专家",
+          "shape": "[B·T,8]",
+          "detail": "混合权重来自原始sigmoid分数，所选归一化后乘2.5"
+        },
+        {
+          "label": "shared(x) + Σ₈ weightₑ × expertₑ(x)",
+          "shape": "[B,T,7168]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "Routed expert gate / w1 / mlp.experts.{e}.gate_proj.weight",
+          "shape": [
+            2048,
+            7168
+          ],
+          "count": 14848,
+          "category": "routed",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "Shared expert gate / w1 / mlp.shared_experts.gate_proj.weight",
+          "shape": [
+            2048,
+            7168
+          ],
+          "count": 58,
+          "category": "shared",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "Routed expert up / w3 / mlp.experts.{e}.up_proj.weight",
+          "shape": [
+            2048,
+            7168
+          ],
+          "count": 14848,
+          "category": "routed",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "Shared expert up / w3 / mlp.shared_experts.up_proj.weight",
+          "shape": [
+            2048,
+            7168
+          ],
+          "count": 58,
+          "category": "shared",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "Routed expert down / w2 / mlp.experts.{e}.down_proj.weight",
+          "shape": [
+            7168,
+            2048
+          ],
+          "count": 14848,
+          "category": "routed",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "Shared expert down / w2 / mlp.shared_experts.down_proj.weight",
+          "shape": [
+            7168,
+            2048
+          ],
+          "count": 58,
+          "category": "shared",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "Router matrix / mlp.gate.weight",
+          "shape": [
+            256,
+            7168
+          ],
+          "count": 58,
+          "category": "router",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "Routing correction bias (state) / mlp.gate.e_score_correction_bias",
+          "shape": [
+            256
+          ],
+          "count": 58,
+          "category": "router",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        }
+      ],
+      "notes": [
+        "每个专家：w2(SiLU(w1(x)) ⊙ w3(x))；无bias。",
+        "所有路由专家重复次数=58×256=14,848；共享专家重复次数=58。",
+        "correction bias [256] 每层一份，按负载规则更新，并非常规梯度参数。"
+      ],
+      "branches": [
+        {
+          "name": "每个专家的 gate/up 双路",
+          "steps": [
+            {
+              "label": "gate_proj / w1 + SiLU",
+              "shape": "7168 → 2048",
+              "detail": "W [2048,7168]；14,680,064参数"
+            },
+            {
+              "label": "up_proj / w3",
+              "shape": "7168 → 2048",
+              "detail": "W [2048,7168]；与gate输出逐元素乘"
+            },
+            {
+              "label": "down_proj / w2",
+              "shape": "2048 → 7168",
+              "detail": "W [7168,2048]；14,680,064参数"
+            }
+          ]
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "parentId": "moe-block"
+    },
+    {
+      "id": "norms",
+      "name": "Block 的两次 RMSNorm",
+      "repeat": "2×61",
+      "kind": "detail",
+      "summary": "每个block独立的attention norm与FFN norm。",
+      "flow": [
+        {
+          "label": "RMSNorm γ [7168] → MLA → residual add",
+          "shape": "[B,T,7168]",
+          "detail": ""
+        },
+        {
+          "label": "RMSNorm γ [7168] → FFN → residual add",
+          "shape": "[B,T,7168]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "Pre-attention RMSNorm / input_layernorm.weight",
+          "shape": [
+            7168
+          ],
+          "count": 61,
+          "category": "block_norm",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        },
+        {
+          "name": "Pre-FFN RMSNorm / post_attention_layernorm.weight",
+          "shape": [
+            7168
+          ],
+          "count": 61,
+          "category": "block_norm",
+          "note": "未切分的逻辑权重；矩阵方向 [out,in]"
+        }
+      ],
+      "notes": [
+        "这里只计block两个norm，MLA内部的1536与512维norm在MLA账本中。"
+      ],
+      "branches": [],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "id": "mtp",
+      "name": "MTP 额外预测分支",
+      "repeat": "×1 · 不在671B主干内",
+      "kind": "aux",
+      "summary": "额外预测 tᵢ₊₂，可在普通推理时去除。",
+      "flow": [
+        {
+          "label": "hᵢ 与 Emb(tᵢ₊₁) 各自RMSNorm",
+          "shape": "[B,T,7168] ×2",
+          "detail": "两份 γ [7168]"
+        },
+        {
+          "label": "concat → eh_proj",
+          "shape": "14336 → 7168",
+          "detail": "W [7168,14336]；102,760,448参数"
+        },
+        {
+          "label": "独立一层MLA+MoE block",
+          "shape": "[B,T,7168]",
+          "detail": "与主干同形状、不同权重；11,507,286,272参数"
+        },
+        {
+          "label": "输出RMSNorm → 共享LM head",
+          "shape": "[B,T,129280]",
+          "detail": "额外 γ [7168]"
+        }
+      ],
+      "weights": [],
+      "notes": [
+        "新增独立参数 11610068224；未加入本页671B主干总账。",
+        "论文中的embedding与head共享；checkpoint另外存有同形状命名张量，不将其当成主干新增层。",
+        "按序列化条目计，全体 684489845504（排除FP8 scale）。未读取完整数值来判断副本相等。"
+      ],
+      "branches": [],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ]
+    }
+  ],
+  "connections": [
+    [
+      "tokens",
+      "embedding"
+    ],
+    [
+      "embedding",
+      "dense-block"
+    ],
+    [
+      "dense-block",
+      "moe-block"
+    ],
+    [
+      "moe-block",
+      "final-norm"
+    ],
+    [
+      "final-norm",
+      "head"
+    ]
+  ],
+  "notes": [
+    "将256个routed改为8，计完整embedding表得37552297472；仅计实际lookup的一行并保留完整LM head得36625625600≈37B。论文仅给近似值，并未公布逐项账本。",
+    "去掉14,848个非梯度路由修正值，主干梯度参数为671026404352。",
+    "KV cache、RoPE/YaRN、激活和通信副本不是网络参数。"
+  ],
+  "checks": {
+    "formulaTotal": 671026419200,
+    "method": "官方代码/config推导，完整主干参数键匹配",
+    "verified": "45,395个参数键覆盖；3个分片中362个header形状匹配",
+    "notVerified": "未下载完整权重；其余分片形状由配置和命名结构推导"
+  }
+}

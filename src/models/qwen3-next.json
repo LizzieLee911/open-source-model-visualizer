@@ -1,0 +1,872 @@
+{
+  "id": "qwen3-next",
+  "name": "Qwen3-Next-80B-A3B Instruct",
+  "company": "Qwen / Alibaba",
+  "color": "#6155F5",
+  "family": "Gated DeltaNet + Gated Attention / MoE",
+  "tagline": "线性递推、全注意力与 512 专家，在 48 层中交替协作。",
+  "checkpoint": "Qwen/Qwen3-Next-80B-A3B-Instruct",
+  "license": "Apache-2.0",
+  "summary": "每 4 层包含 3 个 Gated DeltaNet block 和 1 个 Gated Attention block，重复 12 组。所有 48 层都使用 512 路由专家选 10，加 1 个独立门控的共享专家。",
+  "scope": "完整 BF16 checkpoint：48 层主干 79,674,391,296 参数 + 1 个 MTP 辅助模块 1,650,471,424 参数。embedding 与 LM head 在两条路径共用，不重复计数。",
+  "totalLabel": "81.325B",
+  "activeLabel": "约 3B（官方命名）",
+  "sources": [
+    {
+      "label": "官方 checkpoint config",
+      "url": "https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct/blob/9c7f2fbe84465e40164a94cc16cd30b6999b0cc7/config.json",
+      "revision": "9c7f2fbe84465e40164a94cc16cd30b6999b0cc7",
+      "usedFor": "层数、维度、专家数及路由数"
+    },
+    {
+      "label": "Transformers v4.57.1 实现",
+      "url": "https://github.com/huggingface/transformers/blob/8cb5963cc22174954e7dca2c0a3320b7dc2f4edc/src/transformers/models/qwen3_next/modeling_qwen3_next.py",
+      "revision": "8cb5963cc22174954e7dca2c0a3320b7dc2f4edc",
+      "usedFor": "Attention 与 Gated DeltaNet、MoE、Norm 逐参数构造"
+    },
+    {
+      "label": "配置默认值及层排列",
+      "url": "https://github.com/huggingface/transformers/blob/8cb5963cc22174954e7dca2c0a3320b7dc2f4edc/src/transformers/models/qwen3_next/configuration_qwen3_next.py",
+      "revision": "8cb5963cc22174954e7dca2c0a3320b7dc2f4edc",
+      "usedFor": "attention_bias=False 与每四层一次 full attention"
+    },
+    {
+      "label": "官方权重索引",
+      "url": "https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct/blob/9c7f2fbe84465e40164a94cc16cd30b6999b0cc7/model.safetensors.index.json",
+      "revision": "9c7f2fbe84465e40164a94cc16cd30b6999b0cc7",
+      "usedFor": "75944 张量键及 162649725440 字节 BF16 权重总量"
+    },
+    {
+      "label": "官方 Hub 元数据",
+      "url": "https://huggingface.co/api/models/Qwen/Qwen3-Next-80B-A3B-Instruct/revision/9c7f2fbe84465e40164a94cc16cd30b6999b0cc7",
+      "revision": "9c7f2fbe84465e40164a94cc16cd30b6999b0cc7",
+      "usedFor": "81324862720 BF16 参数独立交叉核验"
+    },
+    {
+      "label": "vLLM MTP 执行实现",
+      "url": "https://github.com/vllm-project/vllm/blob/6b75dfb8a101dcf23c9e2b9e627433c61030cbcf/vllm/model_executor/models/qwen3_next_mtp.py",
+      "revision": "6b75dfb8a101dcf23c9e2b9e627433c61030cbcf",
+      "usedFor": "MTP 两路预归一化、拼接、fc、attention decoder 及共享 embedding/head"
+    },
+    {
+      "label": "官方第 41 分片 header",
+      "url": "https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct/blob/9c7f2fbe84465e40164a94cc16cd30b6999b0cc7/model-00041-of-00041.safetensors",
+      "revision": "9c7f2fbe84465e40164a94cc16cd30b6999b0cc7",
+      "usedFor": "仅 HTTP Range 读取 188440 字节 header，确认全部 MTP 形状"
+    }
+  ],
+  "facts": [
+    {
+      "label": "Decoder blocks",
+      "value": "48 = 36 DeltaNet + 12 Attention"
+    },
+    {
+      "label": "隐藏维度",
+      "value": "2048"
+    },
+    {
+      "label": "每层专家",
+      "value": "512 路由 + 1 共享"
+    },
+    {
+      "label": "每 token 路由",
+      "value": "Top-10 / 512"
+    },
+    {
+      "label": "词表",
+      "value": "151936"
+    }
+  ],
+  "modules": [
+    {
+      "id": "embedding",
+      "name": "Token embedding",
+      "repeat": "×1",
+      "kind": "main",
+      "summary": "输入 token 映射到 2048 维。",
+      "flow": [
+        {
+          "label": "IDs",
+          "shape": "[B,T]",
+          "detail": ""
+        },
+        {
+          "label": "Embedding",
+          "shape": "[B,T,2048]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "model.embed_tokens.weight",
+          "shape": [
+            151936,
+            2048
+          ],
+          "count": 1,
+          "category": "Embedding",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        }
+      ],
+      "notes": [],
+      "sourceIds": [
+        0,
+        1
+      ],
+      "branches": []
+    },
+    {
+      "id": "hybrid",
+      "name": "Hybrid decoder group",
+      "repeat": "×12（每组 4 层）",
+      "kind": "main",
+      "summary": "[DeltaNet + MoE] ×3 → [Attention + MoE] ×1。",
+      "flow": [
+        {
+          "label": "Block 4g+1 / 4g+2 / 4g+3",
+          "shape": "[B,T,2048]",
+          "detail": "每层：RMSNorm → DeltaNet → 残差；RMSNorm → MoE → 残差。"
+        },
+        {
+          "label": "Block 4g+4",
+          "shape": "[B,T,2048]",
+          "detail": "RMSNorm → Gated Attention → 残差；RMSNorm → MoE → 残差。"
+        }
+      ],
+      "weights": [
+        {
+          "name": "model.layers.*.input_layernorm.weight",
+          "shape": [
+            2048
+          ],
+          "count": 48,
+          "category": "Norm",
+          "note": "RMSNorm 为 (1+weight) 缩放，epsilon=1e-6。"
+        },
+        {
+          "name": "model.layers.*.post_attention_layernorm.weight",
+          "shape": [
+            2048
+          ],
+          "count": 48,
+          "category": "Norm",
+          "note": "每层第二个 pre-norm；(1+weight) 缩放。"
+        }
+      ],
+      "notes": [
+        "g=0…11；full attention 为第 4、8、…、48 层（1-based）。"
+      ],
+      "sourceIds": [
+        0,
+        1
+      ],
+      "branches": []
+    },
+    {
+      "id": "delta",
+      "name": "Gated DeltaNet",
+      "repeat": "×36",
+      "kind": "detail",
+      "summary": "Q/K 16 头，V/Z 32 头；通过可衰减的矩阵状态处理序列。",
+      "flow": [
+        {
+          "label": "输入投影与分流",
+          "shape": "Q/K 各 [B,T,16,128]；V/Z 各 [B,T,32,128]",
+          "detail": ""
+        },
+        {
+          "label": "Q/K/V depthwise causal Conv1d + SiLU",
+          "shape": "[B,T,8192]",
+          "detail": "kernel=4，groups=8192；Z 不经过卷积。"
+        },
+        {
+          "label": "Q/K L2 normalize，头重复 2 次",
+          "shape": "Q/K/V 各 [B,T,32,128]",
+          "detail": ""
+        },
+        {
+          "label": "Gated Delta Rule",
+          "shape": "[B,T,32,128]",
+          "detail": "beta=sigmoid(b)；g=−exp(A_log)·softplus(a+dt_bias)。"
+        },
+        {
+          "label": "RMSNorm(output) ⊙ SiLU(Z)",
+          "shape": "[B,T,32,128]",
+          "detail": ""
+        },
+        {
+          "label": "Flatten + out_proj",
+          "shape": "[B,T,2048]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "linear_attn.in_proj_qkvz.weight",
+          "shape": [
+            12288,
+            2048
+          ],
+          "count": 36,
+          "category": "DeltaNet",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "linear_attn.in_proj_ba.weight",
+          "shape": [
+            64,
+            2048
+          ],
+          "count": 36,
+          "category": "DeltaNet",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "linear_attn.conv1d.weight",
+          "shape": [
+            8192,
+            1,
+            4
+          ],
+          "count": 36,
+          "category": "DeltaNet",
+          "note": "Depthwise Conv1d，8192 通道；无 bias。"
+        },
+        {
+          "name": "linear_attn.dt_bias",
+          "shape": [
+            32
+          ],
+          "count": 36,
+          "category": "DeltaNet",
+          "note": "每个 V head 一个时间步偏移参数。"
+        },
+        {
+          "name": "linear_attn.A_log",
+          "shape": [
+            32
+          ],
+          "count": 36,
+          "category": "DeltaNet",
+          "note": "每个 V head 一个衰减参数。"
+        },
+        {
+          "name": "linear_attn.norm.weight",
+          "shape": [
+            128
+          ],
+          "count": 36,
+          "category": "Norm",
+          "note": "按 head 最后一维 RMSNorm，与 32 个 heads 共享这 128 个缩放参数；不是 4096 维参数。"
+        },
+        {
+          "name": "linear_attn.out_proj.weight",
+          "shape": [
+            2048,
+            4096
+          ],
+          "count": 36,
+          "category": "DeltaNet",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        }
+      ],
+      "notes": [
+        "in_proj_qkvz 按 K-head 分组交错打包：每组 128Q+128K+256V+256Z，共 16×768；并非直接四等分。",
+        "每层递推状态 [B,32,128,128]；卷积缓存 [B,8192,4]。这些状态不计参数。",
+        "该分支不应用 RoPE，也不形成长度 T×S 的显式 softmax 矩阵。"
+      ],
+      "sourceIds": [
+        0,
+        1
+      ],
+      "branches": [
+        {
+          "name": "Q/K/V",
+          "steps": [
+            {
+              "label": "投影 → 卷积 → SiLU",
+              "shape": "[B,T,8192]",
+              "detail": ""
+            },
+            {
+              "label": "Q/K 归一化 + repeat；V",
+              "shape": "各 [B,T,32,128]",
+              "detail": ""
+            }
+          ]
+        },
+        {
+          "name": "Z gate",
+          "steps": [
+            {
+              "label": "投影 Z；绕过卷积",
+              "shape": "[B,T,32,128]",
+              "detail": ""
+            },
+            {
+              "label": "SiLU gate × normalized output",
+              "shape": "[B,T,32,128]",
+              "detail": ""
+            }
+          ]
+        },
+        {
+          "name": "Decay / update",
+          "steps": [
+            {
+              "label": "in_proj_ba",
+              "shape": "[B,T,64]",
+              "detail": ""
+            },
+            {
+              "label": "b,a 各 32 → beta,g",
+              "shape": "各 [B,T,32]",
+              "detail": ""
+            }
+          ]
+        }
+      ],
+      "parentId": "hybrid"
+    },
+    {
+      "id": "attention",
+      "name": "Gated full attention",
+      "repeat": "×12",
+      "kind": "detail",
+      "summary": "16 个 Q heads、2 个 KV heads，head_dim=256；输出带逐元素 sigmoid gate。",
+      "flow": [
+        {
+          "label": "q_proj → Q + gate",
+          "shape": "Q/gate 各 [B,T,16,256]",
+          "detail": ""
+        },
+        {
+          "label": "k_proj / v_proj",
+          "shape": "K/V 各 [B,T,2,256]",
+          "detail": ""
+        },
+        {
+          "label": "Q/K head-wise RMSNorm → partial RoPE",
+          "shape": "每 head 64 个旋转维度，192 个保持不变",
+          "detail": ""
+        },
+        {
+          "label": "Causal GQA；KV repeat 8",
+          "shape": "[B,16,T,S] → [B,T,4096]",
+          "detail": ""
+        },
+        {
+          "label": "attention output ⊙ sigmoid(gate) → o_proj",
+          "shape": "[B,T,2048]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "self_attn.q_proj.weight",
+          "shape": [
+            8192,
+            2048
+          ],
+          "count": 12,
+          "category": "Attention",
+          "note": "Q 和 gate 融合投影，各 4096 输出；按 head 打包。"
+        },
+        {
+          "name": "self_attn.k_proj.weight",
+          "shape": [
+            512,
+            2048
+          ],
+          "count": 12,
+          "category": "Attention",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "self_attn.v_proj.weight",
+          "shape": [
+            512,
+            2048
+          ],
+          "count": 12,
+          "category": "Attention",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "self_attn.o_proj.weight",
+          "shape": [
+            2048,
+            4096
+          ],
+          "count": 12,
+          "category": "Attention",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "self_attn.q_norm.weight",
+          "shape": [
+            256
+          ],
+          "count": 12,
+          "category": "Norm",
+          "note": "本分支 head_dim=256；向量跨 16 个 Q heads 共享。"
+        },
+        {
+          "name": "self_attn.k_norm.weight",
+          "shape": [
+            256
+          ],
+          "count": 12,
+          "category": "Norm",
+          "note": "向量跨 2 个 K heads 共享。"
+        }
+      ],
+      "notes": [
+        "partial_rotary_factor=0.25 → rotary_dim=64；RoPE theta=10000000。",
+        "每层 KV cache 为 K/V 各 [B,2,S,256]；属于非参数状态。"
+      ],
+      "sourceIds": [
+        0,
+        1
+      ],
+      "branches": [],
+      "parentId": "hybrid"
+    },
+    {
+      "id": "moe",
+      "name": "Sparse MoE + shared expert",
+      "repeat": "×48",
+      "kind": "detail",
+      "summary": "每层从 512 个专家中选择 10 个；共享专家单独经过 sigmoid gate 后相加。",
+      "flow": [
+        {
+          "label": "Router Linear → softmax → Top-10 → renormalize",
+          "shape": "[B·T,512] → [B·T,10]",
+          "detail": ""
+        },
+        {
+          "label": "选中的 10 个 SwiGLU 专家",
+          "shape": "每专家 2048 → 512 → 2048",
+          "detail": ""
+        },
+        {
+          "label": "路由权重加权求和",
+          "shape": "[B·T,2048]",
+          "detail": ""
+        },
+        {
+          "label": "Shared SwiGLU × sigmoid(shared_expert_gate(x))",
+          "shape": "[B·T,2048]",
+          "detail": ""
+        },
+        {
+          "label": "两路相加 → 外层 residual",
+          "shape": "[B,T,2048]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "mlp.gate.weight",
+          "shape": [
+            512,
+            2048
+          ],
+          "count": 48,
+          "category": "Router",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mlp.experts.*.gate_proj.weight",
+          "shape": [
+            512,
+            2048
+          ],
+          "count": 24576,
+          "category": "Routed experts",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mlp.experts.*.up_proj.weight",
+          "shape": [
+            512,
+            2048
+          ],
+          "count": 24576,
+          "category": "Routed experts",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mlp.experts.*.down_proj.weight",
+          "shape": [
+            2048,
+            512
+          ],
+          "count": 24576,
+          "category": "Routed experts",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mlp.shared_expert.gate_proj.weight",
+          "shape": [
+            512,
+            2048
+          ],
+          "count": 48,
+          "category": "Shared experts",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mlp.shared_expert.up_proj.weight",
+          "shape": [
+            512,
+            2048
+          ],
+          "count": 48,
+          "category": "Shared experts",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mlp.shared_expert.down_proj.weight",
+          "shape": [
+            2048,
+            512
+          ],
+          "count": 48,
+          "category": "Shared experts",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mlp.shared_expert_gate.weight",
+          "shape": [
+            1,
+            2048
+          ],
+          "count": 48,
+          "category": "Router",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        }
+      ],
+      "notes": [
+        "每个专家：down(SiLU(gate(x)) ⊙ up(x))。专家内部没有独立 Norm。",
+        "config 的 intermediate_size=5120 不在这些 MoE 层实例化；moe_intermediate_size 和 shared_expert_intermediate_size 均为 512。",
+        "所有专家都占存储；Top-10 只决定当前 token 的计算路径。"
+      ],
+      "sourceIds": [
+        0,
+        1
+      ],
+      "branches": [],
+      "parentId": "hybrid"
+    },
+    {
+      "id": "head",
+      "name": "Final RMSNorm + LM head",
+      "repeat": "×1",
+      "kind": "main",
+      "summary": "最终隐藏态投影为词表 logits。",
+      "flow": [
+        {
+          "label": "Final RMSNorm",
+          "shape": "[B,T,2048]",
+          "detail": ""
+        },
+        {
+          "label": "LM head",
+          "shape": "[B,T,151936]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "model.norm.weight",
+          "shape": [
+            2048
+          ],
+          "count": 1,
+          "category": "Norm",
+          "note": "(1+weight) RMSNorm。"
+        },
+        {
+          "name": "lm_head.weight",
+          "shape": [
+            151936,
+            2048
+          ],
+          "count": 1,
+          "category": "LM head",
+          "note": "tie_word_embeddings=false，与 embedding 独立。"
+        }
+      ],
+      "notes": [],
+      "sourceIds": [
+        0,
+        1
+      ],
+      "branches": []
+    },
+    {
+      "id": "mtp",
+      "name": "Multi-token prediction 辅助模块",
+      "repeat": "×1",
+      "kind": "aux",
+      "summary": "发布权重自带额外 1 个 full-attention + MoE decoder；常规 48 层主干推理不经过此模块。",
+      "flow": [
+        {
+          "label": "后继 token embedding 与上游 hidden 各自 RMSNorm",
+          "shape": "各 [B,T,2048]",
+          "detail": ""
+        },
+        {
+          "label": "Concat → fc",
+          "shape": "[B,T,4096] → [B,T,2048]",
+          "detail": ""
+        },
+        {
+          "label": "独立 Gated Attention + residual",
+          "shape": "[B,T,2048]",
+          "detail": "结构与 12 个 full-attention 主干层相同。"
+        },
+        {
+          "label": "独立 MoE + residual",
+          "shape": "[B,T,2048]",
+          "detail": "512 选 10 + 1 shared expert；与主干不共享专家权重。"
+        },
+        {
+          "label": "MTP final RMSNorm → 共享 LM head",
+          "shape": "[B,T,151936]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "mtp.layers.0.self_attn.q_proj.weight",
+          "shape": [
+            8192,
+            2048
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "Q 和 gate 融合投影，各 4096 输出；按 head 打包。"
+        },
+        {
+          "name": "mtp.layers.0.self_attn.k_proj.weight",
+          "shape": [
+            512,
+            2048
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mtp.layers.0.self_attn.v_proj.weight",
+          "shape": [
+            512,
+            2048
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mtp.layers.0.self_attn.o_proj.weight",
+          "shape": [
+            2048,
+            4096
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mtp.layers.0.self_attn.q_norm.weight",
+          "shape": [
+            256
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "本分支 head_dim=256；向量跨 16 个 Q heads 共享。"
+        },
+        {
+          "name": "mtp.layers.0.self_attn.k_norm.weight",
+          "shape": [
+            256
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "向量跨 2 个 K heads 共享。"
+        },
+        {
+          "name": "mtp.layers.0.mlp.gate.weight",
+          "shape": [
+            512,
+            2048
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mtp.layers.0.mlp.experts.*.gate_proj.weight",
+          "shape": [
+            512,
+            2048
+          ],
+          "count": 512,
+          "category": "MTP",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mtp.layers.0.mlp.experts.*.up_proj.weight",
+          "shape": [
+            512,
+            2048
+          ],
+          "count": 512,
+          "category": "MTP",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mtp.layers.0.mlp.experts.*.down_proj.weight",
+          "shape": [
+            2048,
+            512
+          ],
+          "count": 512,
+          "category": "MTP",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mtp.layers.0.mlp.shared_expert.gate_proj.weight",
+          "shape": [
+            512,
+            2048
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mtp.layers.0.mlp.shared_expert.up_proj.weight",
+          "shape": [
+            512,
+            2048
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mtp.layers.0.mlp.shared_expert.down_proj.weight",
+          "shape": [
+            2048,
+            512
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mtp.layers.0.mlp.shared_expert_gate.weight",
+          "shape": [
+            1,
+            2048
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mtp.layers.0.input_layernorm.weight",
+          "shape": [
+            2048
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "Decoder pre-norm。"
+        },
+        {
+          "name": "mtp.layers.0.post_attention_layernorm.weight",
+          "shape": [
+            2048
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "MoE pre-norm。"
+        },
+        {
+          "name": "mtp.fc.weight",
+          "shape": [
+            2048,
+            4096
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "权重按 [out,in] 排列；无 bias。"
+        },
+        {
+          "name": "mtp.pre_fc_norm_embedding.weight",
+          "shape": [
+            2048
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "输入 token embedding 预归一化。"
+        },
+        {
+          "name": "mtp.pre_fc_norm_hidden.weight",
+          "shape": [
+            2048
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "隐藏态预归一化。"
+        },
+        {
+          "name": "mtp.norm.weight",
+          "shape": [
+            2048
+          ],
+          "count": 1,
+          "category": "MTP",
+          "note": "MTP 最终归一化。"
+        }
+      ],
+      "notes": [
+        "额外参数精确为 1,650,471,424；其中 fc 为 2048×4096。",
+        "MTP 使用主干 token embedding 与 LM head；header 不包含第二套对应矩阵。",
+        "主干 Transformers v4.57.1 类没有执行 MTP；这里单独列为辅助分支，非第 49 个常规主干 block。"
+      ],
+      "sourceIds": [
+        3,
+        5,
+        6
+      ],
+      "branches": []
+    }
+  ],
+  "connections": [
+    [
+      "embedding",
+      "hybrid"
+    ],
+    [
+      "hybrid",
+      "head"
+    ]
+  ],
+  "notes": [
+    "79.674B 为常规 causal LM 主干；81.325B 为包含 MTP 的完整发布 checkpoint。80B 是模型名称中的舍入规模。",
+    "所有 Linear、Conv1d 均无 bias；dt_bias 是 Gated DeltaNet 独立时间步参数，并非 Linear bias。",
+    "B=批大小，T=当前长度，S=包含历史的注意力长度。权重矩阵按 [out,in]，分支权重仅计一次。",
+    "约 3B 激活参数不是 checkpoint 总参数，也不是显存或 FLOPs。按主干账本纳入完整输入/输出矩阵，并将每层 512 专家替换为选中的 10 个，得到 3,874,929,408；embedding 实际只查表若干行。"
+  ],
+  "checks": {
+    "method": "按 config + 实现逐矩阵乘重复次数，与官方 BF16 参数数及索引 total_size/2 双重核验。",
+    "verified": "总数 81,324,862,720；75944 张量键来自官方权重索引。",
+    "notVerified": "未下载完整权重或执行推理；MTP 形状来自官方分片 header，执行路径参考 vLLM 实现。",
+    "formulaTotal": 81324862720
+  },
+  "totalParams": 81324862720
+}

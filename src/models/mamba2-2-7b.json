@@ -1,0 +1,344 @@
+{
+  "id": "mamba2-2-7b",
+  "name": "Mamba-2 2.7B",
+  "company": "state-spaces",
+  "color": "#b64146",
+  "family": "State Space / SSD",
+  "tagline": "让序列进入固定大小的状态。",
+  "checkpoint": "state-spaces/mamba2-2.7b",
+  "license": "Apache-2.0",
+  "summary": "用状态空间模块替换自注意力，展开每个投影、卷积与状态更新。",
+  "scope": "完整推理语言模型；共享 embedding/head 仅计一次。",
+  "totalParams": 2702599680,
+  "totalLabel": "2.702600B",
+  "activeLabel": null,
+  "sources": [
+    {
+      "label": "官方 checkpoint 配置",
+      "url": "https://huggingface.co/state-spaces/mamba2-2.7b/blob/99b226cc377d131cccc610ed4346db564f381f1e/config.json",
+      "revision": "99b226cc377d131cccc610ed4346db564f381f1e",
+      "usedFor": "隐藏维度、层数、词表与混合模式"
+    },
+    {
+      "label": "官方模块实现",
+      "url": "https://github.com/state-spaces/mamba/blob/e9594ce1c732d97440f0332fdc43170a2294dbfa/mamba_ssm/modules/mamba2.py",
+      "revision": "e9594ce1c732d97440f0332fdc43170a2294dbfa",
+      "usedFor": "矩阵、卷积、向量、门控与残差的真实实现"
+    },
+    {
+      "label": "官方权重元数据",
+      "url": "https://huggingface.co/state-spaces/mamba2-2.7b/tree/99b226cc377d131cccc610ed4346db564f381f1e",
+      "revision": "99b226cc377d131cccc610ed4346db564f381f1e",
+      "usedFor": "仅读取 tensor shapes 元数据，未下载完整权重"
+    }
+  ],
+  "facts": [
+    {
+      "label": "主干层数",
+      "value": "64"
+    },
+    {
+      "label": "隐藏维度",
+      "value": "2560"
+    },
+    {
+      "label": "Mamba 层数",
+      "value": "64"
+    }
+  ],
+  "modules": [
+    {
+      "id": "embedding",
+      "name": "Token embedding",
+      "repeat": "×1",
+      "summary": "词元映射到隐藏空间。",
+      "flow": [
+        {
+          "label": "token IDs",
+          "shape": "[B,T]",
+          "detail": ""
+        },
+        {
+          "label": "embedding",
+          "shape": "[B,T,2560]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "embedding.weight",
+          "shape": [
+            50288,
+            2560
+          ],
+          "count": 1,
+          "category": "Embedding",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        }
+      ],
+      "notes": [
+        "原始 vocab_size=50277，补齐至 50288；输入/输出权重共享，仅计一次。"
+      ],
+      "kind": "main",
+      "sourceIds": [
+        0,
+        1
+      ]
+    },
+    {
+      "id": "stack",
+      "name": "Mamba-2 主干",
+      "repeat": "×64",
+      "summary": "每层：RMSNorm → 对应 mixer → 与输入残差相加。",
+      "flow": [
+        {
+          "label": "输入/残差",
+          "shape": "[B,T,2560]",
+          "detail": ""
+        },
+        {
+          "label": "逐层 RMSNorm → mixer",
+          "shape": "[B,T,2560]",
+          "detail": ""
+        },
+        {
+          "label": "residual + mixer",
+          "shape": "[B,T,2560]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "layers.*.norm.weight",
+          "shape": [
+            2560
+          ],
+          "count": 64,
+          "category": "RMSNorm",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        }
+      ],
+      "notes": [
+        "精确层序列（从左到右，1-based）：MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+        "64 层均为 Mamba-2；没有额外 FFN，也没有 Attention。"
+      ],
+      "kind": "main",
+      "sourceIds": [
+        0,
+        1
+      ]
+    },
+    {
+      "id": "mamba",
+      "name": "Mamba-2 / SSD",
+      "repeat": "×64",
+      "summary": "80 heads × 64，state_size=128，B/C 分 1 组。",
+      "flow": [
+        {
+          "label": "in_proj",
+          "shape": "[B,T,10576]",
+          "detail": "拆为 z=5120、x=5120、B=128、C=128、dt=80"
+        },
+        {
+          "label": "对 x/B/C 做 causal depthwise conv + SiLU",
+          "shape": "[B,T,5376]",
+          "detail": "kernel=4；每通道独立卷积"
+        },
+        {
+          "label": "SSD scan",
+          "shape": "[B,T,80,64]",
+          "detail": "A=-exp(A_log)，Δ=softplus(dt+dt_bias)，D 为 skip 向量"
+        },
+        {
+          "label": "门控 + RMSNorm",
+          "shape": "[B,T,5120]",
+          "detail": "y × SiLU(z) 后做分组 RMSNorm"
+        },
+        {
+          "label": "out_proj",
+          "shape": "[B,T,2560]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "mixer.in_proj.weight",
+          "shape": [
+            10576,
+            2560
+          ],
+          "count": 64,
+          "category": "Mamba input",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.conv1d.weight",
+          "shape": [
+            5376,
+            1,
+            4
+          ],
+          "count": 64,
+          "category": "Depthwise Conv",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.conv1d.bias",
+          "shape": [
+            5376
+          ],
+          "count": 64,
+          "category": "Depthwise Conv",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.A_log",
+          "shape": [
+            80
+          ],
+          "count": 64,
+          "category": "SSM vectors",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.D",
+          "shape": [
+            80
+          ],
+          "count": 64,
+          "category": "SSM vectors",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.dt_bias",
+          "shape": [
+            80
+          ],
+          "count": 64,
+          "category": "SSM vectors",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.norm.weight",
+          "shape": [
+            5120
+          ],
+          "count": 64,
+          "category": "Gated RMSNorm",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.out_proj.weight",
+          "shape": [
+            2560,
+            5120
+          ],
+          "count": 64,
+          "category": "Mamba output",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        }
+      ],
+      "notes": [
+        "每层 SSM 运行状态 [B,80,64,128]；conv cache [B,5376,4]；两者不是可训练参数。",
+        "B、C 是输入相关激活，各 [B,T,1,128]；不是额外静态参数矩阵。",
+        "in_proj/out_proj 无 bias；conv1d 有 bias。"
+      ],
+      "kind": "detail",
+      "sourceIds": [
+        0,
+        1
+      ],
+      "parentId": "stack",
+      "branches": [
+        {
+          "name": "z 门控支路",
+          "steps": [
+            {
+              "label": "z",
+              "shape": "[B,T,5120]",
+              "detail": ""
+            },
+            {
+              "label": "SiLU(z)",
+              "shape": "[B,T,5120]",
+              "detail": ""
+            }
+          ]
+        },
+        {
+          "name": "状态支路",
+          "steps": [
+            {
+              "label": "x / B / C / dt",
+              "shape": "[B,T,5456]",
+              "detail": ""
+            },
+            {
+              "label": "卷积 + SSD",
+              "shape": "[B,T,5120]",
+              "detail": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "output",
+      "name": "最终 RMSNorm + LM head",
+      "repeat": "×1",
+      "summary": "隐藏状态映射成词表 logits。",
+      "flow": [
+        {
+          "label": "final RMSNorm",
+          "shape": "[B,T,2560]",
+          "detail": ""
+        },
+        {
+          "label": "LM head",
+          "shape": "[B,T,50288]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "norm_f.weight",
+          "shape": [
+            2560
+          ],
+          "count": 1,
+          "category": "RMSNorm",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        }
+      ],
+      "notes": [
+        "LM head 无 bias。",
+        "与 embedding 共享同一 storage，不重复加参数。"
+      ],
+      "kind": "main",
+      "sourceIds": [
+        0,
+        1
+      ]
+    }
+  ],
+  "connections": [
+    [
+      "embedding",
+      "stack"
+    ],
+    [
+      "stack",
+      "output"
+    ]
+  ],
+  "notes": [
+    "B 表示 batch，T 表示序列长度。权重形状与激活形状分别列示。",
+    "没有将运行 cache、激活或中间 SSM state 加入参数量。"
+  ],
+  "checks": {
+    "formulaTotal": 2702599680,
+    "method": "逐项 shape 乘积 × 重复次数；与官方权重 tensor shape 多重集合比较。",
+    "verified": "配置 + 官方实现 + checkpoint 元数据逐形状覆盖，精确总量相等。",
+    "notVerified": "未下载或执行完整模型；不验证数值推理输出。"
+  }
+}

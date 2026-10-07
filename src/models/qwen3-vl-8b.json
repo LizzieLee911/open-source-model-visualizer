@@ -1,0 +1,721 @@
+{
+  "id": "qwen3-vl-8b",
+  "name": "Qwen3-VL-8B-Instruct",
+  "company": "Alibaba Qwen",
+  "color": "#6155f5",
+  "family": "Vision-Language / GQA + DeepStack",
+  "tagline": "视觉与文字的双路主干，DeepStack 将多层视觉特征注入语言模型。",
+  "checkpoint": "Qwen/Qwen3-VL-8B-Instruct",
+  "license": "Apache-2.0",
+  "summary": "统计完整 Qwen3-VL-8B-Instruct checkpoint：语言模型、视觉编码器、最终 merger、三个 DeepStack merger、独立 lm_head；共 8,767,123,696 个参数。",
+  "scope": "统计完整 Qwen3-VL-8B-Instruct checkpoint：语言模型、视觉编码器、最终 merger、三个 DeepStack merger、独立 lm_head；共 8,767,123,696 个参数。",
+  "totalParams": 8767123696,
+  "totalLabel": "8.767124B",
+  "activeLabel": null,
+  "sources": [
+    {
+      "label": "官方 checkpoint config",
+      "url": "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct/blob/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b/config.json",
+      "revision": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+      "usedFor": "全部结构超参数"
+    },
+    {
+      "label": "实现源码",
+      "url": "https://github.com/huggingface/transformers/blob/8cb5963cc22174954e7dca2c0a3320b7dc2f4edc/src/transformers/models/qwen3_vl/modeling_qwen3_vl.py",
+      "revision": "8cb5963cc22174954e7dca2c0a3320b7dc2f4edc",
+      "usedFor": "算子、偏置、归一化、共享权重及非参数状态"
+    },
+    {
+      "label": "官方 Safetensors 元数据",
+      "url": "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct/tree/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+      "revision": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+      "usedFor": "通过 HTTP Range 只读取张量头，逐一核对形状与总和"
+    }
+  ],
+  "facts": [
+    {
+      "label": "语言 block",
+      "value": "36"
+    },
+    {
+      "label": "视觉 block",
+      "value": "27"
+    },
+    {
+      "label": "视觉分支",
+      "value": "1 final + 3 DeepStack mergers"
+    },
+    {
+      "label": "语言 GQA",
+      "value": "32 Q / 8 KV heads"
+    },
+    {
+      "label": "视觉 heads",
+      "value": "16 × 72"
+    }
+  ],
+  "modules": [
+    {
+      "id": "vision-input",
+      "name": "图像 / 视频 patch embedding",
+      "repeat": "×1",
+      "kind": "main",
+      "summary": "视觉输入拆成时空 patch，再加插值位置编码。",
+      "flow": [
+        {
+          "label": "图像/视频 patch",
+          "shape": "[N,3,2,16,16]",
+          "detail": "N 为合计视觉 patch 数；静态图像由处理器适配 temporal patch。"
+        },
+        {
+          "label": "Conv3d patch projection",
+          "shape": "[N,1152]",
+          "detail": "kernel=stride=(2,16,16)，含 bias。"
+        },
+        {
+          "label": "加插值位置 embedding",
+          "shape": "[N,1152]",
+          "detail": "学习表 2304×1152 对应 48×48 基础网格；视觉 RoPE 在各 block 内作用于 Q/K，不在 patch 输入处相加。"
+        }
+      ],
+      "notes": [],
+      "weights": [
+        {
+          "name": "model.visual.patch_embed.proj.bias",
+          "shape": [
+            1152
+          ],
+          "count": 1,
+          "category": "vision-input",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.patch_embed.proj.weight",
+          "shape": [
+            1152,
+            3,
+            2,
+            16,
+            16
+          ],
+          "count": 1,
+          "category": "vision-input",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.pos_embed.weight",
+          "shape": [
+            2304,
+            1152
+          ],
+          "count": 1,
+          "category": "vision-input",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "branches": []
+    },
+    {
+      "id": "vision-block",
+      "name": "Vision Transformer",
+      "repeat": "×27",
+      "kind": "main",
+      "summary": "16 个 attention head，head_dim=72；双 pre-LayerNorm 残差块。",
+      "flow": [
+        {
+          "label": "LayerNorm → fused QKV",
+          "shape": "[N,3,16,72]",
+          "detail": "qkv 为 3456×1152，含 bias；Q/K 应用二维视觉 RoPE。"
+        },
+        {
+          "label": "视觉 attention → projection + 残差",
+          "shape": "[N,1152]",
+          "detail": "按视觉帧/图像分组执行 attention，非语言 causal attention。"
+        },
+        {
+          "label": "LayerNorm → fc1 → GELU → fc2 + 残差",
+          "shape": "[N,1152]",
+          "detail": "1152→4304→1152；全部 Linear 含 bias。"
+        }
+      ],
+      "notes": [
+        "索引 8、16、24 的输出分叉给三个独立 DeepStack merger；即第 9、17、25 个视觉 block。"
+      ],
+      "weights": [
+        {
+          "name": "model.visual.blocks.*.attn.proj.bias",
+          "shape": [
+            1152
+          ],
+          "count": 27,
+          "category": "vision-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.blocks.*.attn.proj.weight",
+          "shape": [
+            1152,
+            1152
+          ],
+          "count": 27,
+          "category": "vision-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.blocks.*.attn.qkv.bias",
+          "shape": [
+            3456
+          ],
+          "count": 27,
+          "category": "vision-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.blocks.*.attn.qkv.weight",
+          "shape": [
+            3456,
+            1152
+          ],
+          "count": 27,
+          "category": "vision-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.blocks.*.mlp.linear_fc1.bias",
+          "shape": [
+            4304
+          ],
+          "count": 27,
+          "category": "vision-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.blocks.*.mlp.linear_fc1.weight",
+          "shape": [
+            4304,
+            1152
+          ],
+          "count": 27,
+          "category": "vision-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.blocks.*.mlp.linear_fc2.bias",
+          "shape": [
+            1152
+          ],
+          "count": 27,
+          "category": "vision-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.blocks.*.mlp.linear_fc2.weight",
+          "shape": [
+            1152,
+            4304
+          ],
+          "count": 27,
+          "category": "vision-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.blocks.*.norm1.bias",
+          "shape": [
+            1152
+          ],
+          "count": 27,
+          "category": "vision-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.blocks.*.norm1.weight",
+          "shape": [
+            1152
+          ],
+          "count": 27,
+          "category": "vision-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.blocks.*.norm2.bias",
+          "shape": [
+            1152
+          ],
+          "count": 27,
+          "category": "vision-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.blocks.*.norm2.weight",
+          "shape": [
+            1152
+          ],
+          "count": 27,
+          "category": "vision-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "branches": []
+    },
+    {
+      "id": "merger",
+      "name": "最终视觉 Patch Merger",
+      "repeat": "×1",
+      "kind": "main",
+      "summary": "最后一个视觉 block 输出压缩为空间合并 token。",
+      "flow": [
+        {
+          "label": "LayerNorm(1152)",
+          "shape": "[N,1152]",
+          "detail": "先 norm 再拼接空间 2×2 patch。"
+        },
+        {
+          "label": "拼接 4 patch",
+          "shape": "[N/4,4608]",
+          "detail": "spatial_merge_size=2；token 数缩至四分之一。"
+        },
+        {
+          "label": "fc1 → GELU → fc2",
+          "shape": "[N/4,4096]",
+          "detail": "4608→4608→4096，含 bias，替换语言序列的视觉占位 embedding。"
+        }
+      ],
+      "notes": [],
+      "weights": [
+        {
+          "name": "model.visual.merger.linear_fc1.bias",
+          "shape": [
+            4608
+          ],
+          "count": 1,
+          "category": "merger",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.merger.linear_fc1.weight",
+          "shape": [
+            4608,
+            4608
+          ],
+          "count": 1,
+          "category": "merger",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.merger.linear_fc2.bias",
+          "shape": [
+            4096
+          ],
+          "count": 1,
+          "category": "merger",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.merger.linear_fc2.weight",
+          "shape": [
+            4096,
+            4608
+          ],
+          "count": 1,
+          "category": "merger",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.merger.norm.bias",
+          "shape": [
+            1152
+          ],
+          "count": 1,
+          "category": "merger",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.merger.norm.weight",
+          "shape": [
+            1152
+          ],
+          "count": 1,
+          "category": "merger",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "branches": []
+    },
+    {
+      "id": "deepstack",
+      "name": "DeepStack 视觉分支",
+      "repeat": "×3",
+      "kind": "detail",
+      "summary": "三个中间层各有独立 merger，不共享参数。",
+      "flow": [
+        {
+          "label": "来自视觉 block 8 / 16 / 24",
+          "shape": "[N,1152]",
+          "detail": "索引为零基。"
+        },
+        {
+          "label": "拼接 → LayerNorm(4608)",
+          "shape": "[N/4,4608]",
+          "detail": "与最终 merger 不同：在拼接之后 norm。"
+        },
+        {
+          "label": "fc1 → GELU → fc2",
+          "shape": "[N/4,4096]",
+          "detail": "4608→4608→4096；分别加到语言 block 0、1、2 输出中的视觉 token 位置。"
+        }
+      ],
+      "notes": [],
+      "weights": [
+        {
+          "name": "model.visual.deepstack_merger_list.*.linear_fc1.bias",
+          "shape": [
+            4608
+          ],
+          "count": 3,
+          "category": "deepstack",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.deepstack_merger_list.*.linear_fc1.weight",
+          "shape": [
+            4608,
+            4608
+          ],
+          "count": 3,
+          "category": "deepstack",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.deepstack_merger_list.*.linear_fc2.bias",
+          "shape": [
+            4096
+          ],
+          "count": 3,
+          "category": "deepstack",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.deepstack_merger_list.*.linear_fc2.weight",
+          "shape": [
+            4096,
+            4608
+          ],
+          "count": 3,
+          "category": "deepstack",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.deepstack_merger_list.*.norm.bias",
+          "shape": [
+            4608
+          ],
+          "count": 3,
+          "category": "deepstack",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.visual.deepstack_merger_list.*.norm.weight",
+          "shape": [
+            4608
+          ],
+          "count": 3,
+          "category": "deepstack",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "branches": []
+    },
+    {
+      "id": "embedding",
+      "name": "文本 embedding 与视觉融合",
+      "repeat": "×1",
+      "kind": "main",
+      "summary": "文本 token 查表；视觉 token 对应位置用最终 merger 特征替换。",
+      "flow": [
+        {
+          "label": "Token IDs",
+          "shape": "[B,T]",
+          "detail": "词表 151936。"
+        },
+        {
+          "label": "lookup / 视觉替换",
+          "shape": "[B,T,4096]",
+          "detail": "embedding 和 lm_head 不共享。"
+        }
+      ],
+      "notes": [],
+      "weights": [
+        {
+          "name": "model.language_model.embed_tokens.weight",
+          "shape": [
+            151936,
+            4096
+          ],
+          "count": 1,
+          "category": "embedding",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "branches": []
+    },
+    {
+      "id": "text-block",
+      "name": "语言 Decoder block",
+      "repeat": "×36",
+      "kind": "main",
+      "summary": "GQA + SwiGLU，双 pre-RMSNorm 残差结构。",
+      "flow": [
+        {
+          "label": "RMSNorm → Q / K / V",
+          "shape": "Q:[B,T,32,128]; K/V:[B,T,8,128]",
+          "detail": "Q 4096→4096；K/V 各 4096→1024；全部无 bias。"
+        },
+        {
+          "label": "逐 head Q/K RMSNorm → interleaved MRoPE",
+          "shape": "Q:[B,T,32,128]; K:[B,T,8,128]",
+          "detail": "q_norm/k_norm 各只有 128 个参数，所有 head 共享该维度的缩放；MRoPE sections=[24,20,20]。"
+        },
+        {
+          "label": "causal GQA → O projection + 残差",
+          "shape": "[B,T,4096]",
+          "detail": "32 query heads / 8 KV heads；每组 4 个 Q head 共享 K/V；O 为 4096×4096。"
+        },
+        {
+          "label": "RMSNorm → SwiGLU + 残差",
+          "shape": "[B,T,4096]",
+          "detail": "SiLU(gate(x)) × up(x)，两个分支均 4096→12288，down 为 12288→4096；无 bias。"
+        }
+      ],
+      "notes": [
+        "第 0、1、2 层结束后，按视觉位置 mask 加入对应 DeepStack 特征；没有额外 cross-attention。"
+      ],
+      "weights": [
+        {
+          "name": "model.language_model.layers.*.input_layernorm.weight",
+          "shape": [
+            4096
+          ],
+          "count": 36,
+          "category": "text-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.language_model.layers.*.mlp.down_proj.weight",
+          "shape": [
+            4096,
+            12288
+          ],
+          "count": 36,
+          "category": "text-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.language_model.layers.*.mlp.gate_proj.weight",
+          "shape": [
+            12288,
+            4096
+          ],
+          "count": 36,
+          "category": "text-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.language_model.layers.*.mlp.up_proj.weight",
+          "shape": [
+            12288,
+            4096
+          ],
+          "count": 36,
+          "category": "text-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.language_model.layers.*.post_attention_layernorm.weight",
+          "shape": [
+            4096
+          ],
+          "count": 36,
+          "category": "text-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.language_model.layers.*.self_attn.k_norm.weight",
+          "shape": [
+            128
+          ],
+          "count": 36,
+          "category": "text-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.language_model.layers.*.self_attn.k_proj.weight",
+          "shape": [
+            1024,
+            4096
+          ],
+          "count": 36,
+          "category": "text-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.language_model.layers.*.self_attn.o_proj.weight",
+          "shape": [
+            4096,
+            4096
+          ],
+          "count": 36,
+          "category": "text-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.language_model.layers.*.self_attn.q_norm.weight",
+          "shape": [
+            128
+          ],
+          "count": 36,
+          "category": "text-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.language_model.layers.*.self_attn.q_proj.weight",
+          "shape": [
+            4096,
+            4096
+          ],
+          "count": 36,
+          "category": "text-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.language_model.layers.*.self_attn.v_proj.weight",
+          "shape": [
+            1024,
+            4096
+          ],
+          "count": 36,
+          "category": "text-block",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "branches": []
+    },
+    {
+      "id": "head",
+      "name": "最终 RMSNorm 与词表输出",
+      "repeat": "×1",
+      "kind": "main",
+      "summary": "输出每个位置的 token logits。",
+      "flow": [
+        {
+          "label": "RMSNorm",
+          "shape": "[B,T,4096]",
+          "detail": "4096 个缩放参数，无 bias。"
+        },
+        {
+          "label": "lm_head",
+          "shape": "[B,T,151936]",
+          "detail": "151936×4096，无 bias；独立于输入 embedding。"
+        }
+      ],
+      "notes": [],
+      "weights": [
+        {
+          "name": "lm_head.weight",
+          "shape": [
+            151936,
+            4096
+          ],
+          "count": 1,
+          "category": "head",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.language_model.norm.weight",
+          "shape": [
+            4096
+          ],
+          "count": 1,
+          "category": "head",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "branches": []
+    }
+  ],
+  "connections": [
+    [
+      "vision-input",
+      "vision-block"
+    ],
+    [
+      "vision-block",
+      "merger"
+    ],
+    [
+      "vision-block",
+      "deepstack"
+    ],
+    [
+      "merger",
+      "embedding"
+    ],
+    [
+      "embedding",
+      "text-block"
+    ],
+    [
+      "deepstack",
+      "text-block"
+    ],
+    [
+      "text-block",
+      "head"
+    ]
+  ],
+  "notes": [
+    "N 表示所有图像/视频的视觉 patch 总数；B/T 为语言批次/长度，均非固定尺寸。",
+    "图像与视频使用同一个视觉编码器，不额外重复计算参数。",
+    "RoPE、mask、attention softmax、GELU、SiLU、残差相加和 KV cache 不含可训练参数。"
+  ],
+  "checks": {
+    "formulaTotal": 8767123696,
+    "method": "每个矩阵/向量的 prod(shape) × count，聚合清单与官方 safetensors header 完整匹配。",
+    "verified": "已下载配置、固定版本源码及仅张量头；check.py 校验覆盖率、每项形状和总数。",
+    "notVerified": "未下载大权重、未运行完整推理。"
+  }
+}

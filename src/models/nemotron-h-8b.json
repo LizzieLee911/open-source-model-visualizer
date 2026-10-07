@@ -1,0 +1,488 @@
+{
+  "id": "nemotron-h-8b",
+  "name": "Nemotron-H 8B Base 8K",
+  "company": "NVIDIA",
+  "color": "#76b900",
+  "family": "Mamba + Attention + MLP",
+  "tagline": "把状态空间、注意力与 MLP 排在同一条主干上。",
+  "checkpoint": "nvidia/Nemotron-H-8B-Base-8K",
+  "license": "NVIDIA Internal Scientific Research and Development Model License",
+  "summary": "52 个独立残差层，包含 24 个 Mamba、4 个 Attention 和 24 个 MLP。",
+  "scope": "完整 Base-8K checkpoint，包含独立 embedding 与 LM head。",
+  "totalParams": 8100852736,
+  "totalLabel": "8.100853B",
+  "activeLabel": null,
+  "sources": [
+    {
+      "label": "官方 checkpoint 配置",
+      "url": "https://huggingface.co/nvidia/Nemotron-H-8B-Base-8K/blob/94ea861e008c2dfced3e8e1302094024077aa04e/config.json",
+      "revision": "94ea861e008c2dfced3e8e1302094024077aa04e",
+      "usedFor": "隐藏维度、层数、词表与混合模式"
+    },
+    {
+      "label": "官方模块实现",
+      "url": "https://huggingface.co/nvidia/Nemotron-H-8B-Base-8K/blob/94ea861e008c2dfced3e8e1302094024077aa04e/modeling_nemotron_h.py",
+      "revision": "94ea861e008c2dfced3e8e1302094024077aa04e",
+      "usedFor": "矩阵、卷积、向量、门控与残差的真实实现"
+    },
+    {
+      "label": "官方权重元数据",
+      "url": "https://huggingface.co/nvidia/Nemotron-H-8B-Base-8K/tree/94ea861e008c2dfced3e8e1302094024077aa04e",
+      "revision": "94ea861e008c2dfced3e8e1302094024077aa04e",
+      "usedFor": "仅读取 tensor shapes 元数据，未下载完整权重"
+    }
+  ],
+  "facts": [
+    {
+      "label": "主干层数",
+      "value": "52"
+    },
+    {
+      "label": "隐藏维度",
+      "value": "4096"
+    },
+    {
+      "label": "Mamba 层数",
+      "value": "24"
+    }
+  ],
+  "modules": [
+    {
+      "id": "embedding",
+      "name": "Token embedding",
+      "repeat": "×1",
+      "summary": "词元映射到隐藏空间。",
+      "flow": [
+        {
+          "label": "token IDs",
+          "shape": "[B,T]",
+          "detail": ""
+        },
+        {
+          "label": "embedding",
+          "shape": "[B,T,4096]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "embedding.weight",
+          "shape": [
+            131072,
+            4096
+          ],
+          "count": 1,
+          "category": "Embedding",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        }
+      ],
+      "notes": [
+        "输入 embedding 与输出 head 不共享。"
+      ],
+      "kind": "main",
+      "sourceIds": [
+        0,
+        1
+      ]
+    },
+    {
+      "id": "stack",
+      "name": "混合主干",
+      "repeat": "×52",
+      "summary": "每层：RMSNorm → 对应 mixer → 与输入残差相加。",
+      "flow": [
+        {
+          "label": "输入/残差",
+          "shape": "[B,T,4096]",
+          "detail": ""
+        },
+        {
+          "label": "逐层 RMSNorm → mixer",
+          "shape": "[B,T,4096]",
+          "detail": ""
+        },
+        {
+          "label": "residual + mixer",
+          "shape": "[B,T,4096]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "layers.*.norm.weight",
+          "shape": [
+            4096
+          ],
+          "count": 52,
+          "category": "RMSNorm",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        }
+      ],
+      "notes": [
+        "精确层序列（从左到右，1-based）：M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
+        "M=Mamba-2；*=Attention；-=MLP。"
+      ],
+      "kind": "main",
+      "sourceIds": [
+        0,
+        1
+      ]
+    },
+    {
+      "id": "mamba",
+      "name": "Mamba-2 / SSD",
+      "repeat": "×24",
+      "summary": "128 heads × 64，state_size=128，B/C 分 8 组。",
+      "flow": [
+        {
+          "label": "in_proj",
+          "shape": "[B,T,18560]",
+          "detail": "拆为 z=8192、x=8192、B=1024、C=1024、dt=128"
+        },
+        {
+          "label": "对 x/B/C 做 causal depthwise conv + SiLU",
+          "shape": "[B,T,10240]",
+          "detail": "kernel=4；每通道独立卷积"
+        },
+        {
+          "label": "SSD scan",
+          "shape": "[B,T,128,64]",
+          "detail": "A=-exp(A_log)，Δ=softplus(dt+dt_bias)，D 为 skip 向量"
+        },
+        {
+          "label": "门控 + RMSNorm",
+          "shape": "[B,T,8192]",
+          "detail": "y × SiLU(z) 后做分组 RMSNorm"
+        },
+        {
+          "label": "out_proj",
+          "shape": "[B,T,4096]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "mixer.in_proj.weight",
+          "shape": [
+            18560,
+            4096
+          ],
+          "count": 24,
+          "category": "Mamba input",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.conv1d.weight",
+          "shape": [
+            10240,
+            1,
+            4
+          ],
+          "count": 24,
+          "category": "Depthwise Conv",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.conv1d.bias",
+          "shape": [
+            10240
+          ],
+          "count": 24,
+          "category": "Depthwise Conv",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.A_log",
+          "shape": [
+            128
+          ],
+          "count": 24,
+          "category": "SSM vectors",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.D",
+          "shape": [
+            128
+          ],
+          "count": 24,
+          "category": "SSM vectors",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.dt_bias",
+          "shape": [
+            128
+          ],
+          "count": 24,
+          "category": "SSM vectors",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.norm.weight",
+          "shape": [
+            8192
+          ],
+          "count": 24,
+          "category": "Gated RMSNorm",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.out_proj.weight",
+          "shape": [
+            4096,
+            8192
+          ],
+          "count": 24,
+          "category": "Mamba output",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        }
+      ],
+      "notes": [
+        "每层 SSM 运行状态 [B,128,64,128]；conv cache [B,10240,4]；两者不是可训练参数。",
+        "B、C 是输入相关激活，各 [B,T,8,128]；不是额外静态参数矩阵。",
+        "in_proj/out_proj 无 bias；conv1d 有 bias。"
+      ],
+      "kind": "detail",
+      "sourceIds": [
+        0,
+        1
+      ],
+      "parentId": "stack",
+      "branches": [
+        {
+          "name": "z 门控支路",
+          "steps": [
+            {
+              "label": "z",
+              "shape": "[B,T,8192]",
+              "detail": ""
+            },
+            {
+              "label": "SiLU(z)",
+              "shape": "[B,T,8192]",
+              "detail": ""
+            }
+          ]
+        },
+        {
+          "name": "状态支路",
+          "steps": [
+            {
+              "label": "x / B / C / dt",
+              "shape": "[B,T,10368]",
+              "detail": ""
+            },
+            {
+              "label": "卷积 + SSD",
+              "shape": "[B,T,8192]",
+              "detail": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "attention",
+      "name": "GQA Attention",
+      "repeat": "×4",
+      "summary": "32 个 Q heads 共享 8 个 K/V heads；每头 128。",
+      "flow": [
+        {
+          "label": "Q",
+          "shape": "[B,32,T,128]",
+          "detail": ""
+        },
+        {
+          "label": "K/V",
+          "shape": "各 [B,8,T,128]",
+          "detail": ""
+        },
+        {
+          "label": "QKᵀ / √128 → causal softmax → V",
+          "shape": "[B,32,T,128]",
+          "detail": ""
+        },
+        {
+          "label": "拼接 + o_proj",
+          "shape": "[B,T,4096]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "mixer.q_proj.weight",
+          "shape": [
+            4096,
+            4096
+          ],
+          "count": 4,
+          "category": "Attention",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.k_proj.weight",
+          "shape": [
+            1024,
+            4096
+          ],
+          "count": 4,
+          "category": "Attention",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.v_proj.weight",
+          "shape": [
+            1024,
+            4096
+          ],
+          "count": 4,
+          "category": "Attention",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.o_proj.weight",
+          "shape": [
+            4096,
+            4096
+          ],
+          "count": 4,
+          "category": "Attention",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        }
+      ],
+      "notes": [
+        "所有投影无 bias；官方此版本 Attention 未应用 RoPE。",
+        "K/V cache 各为 [B,8,T,128]，为运行状态而非参数。",
+        "Attention 层位置（1-based）：[8, 19, 30, 41]"
+      ],
+      "kind": "detail",
+      "sourceIds": [
+        0,
+        1
+      ],
+      "parentId": "stack"
+    },
+    {
+      "id": "mlp",
+      "name": "ReLU² MLP",
+      "repeat": "×24",
+      "summary": "独立 MLP 层；两次线性映射，中间 ReLU 的平方。",
+      "flow": [
+        {
+          "label": "up_proj",
+          "shape": "[B,T,21504]",
+          "detail": ""
+        },
+        {
+          "label": "ReLU(x)²",
+          "shape": "[B,T,21504]",
+          "detail": ""
+        },
+        {
+          "label": "down_proj",
+          "shape": "[B,T,4096]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "mixer.up_proj.weight",
+          "shape": [
+            21504,
+            4096
+          ],
+          "count": 24,
+          "category": "MLP",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "mixer.down_proj.weight",
+          "shape": [
+            4096,
+            21504
+          ],
+          "count": 24,
+          "category": "MLP",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        }
+      ],
+      "notes": [
+        "不是 SwiGLU：没有独立 gate_proj；两个 Linear 均无 bias。"
+      ],
+      "kind": "detail",
+      "sourceIds": [
+        0,
+        1
+      ],
+      "parentId": "stack"
+    },
+    {
+      "id": "output",
+      "name": "最终 RMSNorm + LM head",
+      "repeat": "×1",
+      "summary": "隐藏状态映射成词表 logits。",
+      "flow": [
+        {
+          "label": "final RMSNorm",
+          "shape": "[B,T,4096]",
+          "detail": ""
+        },
+        {
+          "label": "LM head",
+          "shape": "[B,T,131072]",
+          "detail": ""
+        }
+      ],
+      "weights": [
+        {
+          "name": "norm_f.weight",
+          "shape": [
+            4096
+          ],
+          "count": 1,
+          "category": "RMSNorm",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        },
+        {
+          "name": "lm_head.weight",
+          "shape": [
+            131072,
+            4096
+          ],
+          "count": 1,
+          "category": "Output head",
+          "note": "权重维度采用 [out,in]；向量按长度列出。"
+        }
+      ],
+      "notes": [
+        "输出权重独立于 embedding。"
+      ],
+      "kind": "main",
+      "sourceIds": [
+        0,
+        1
+      ]
+    }
+  ],
+  "connections": [
+    [
+      "embedding",
+      "stack"
+    ],
+    [
+      "stack",
+      "output"
+    ]
+  ],
+  "notes": [
+    "B 表示 batch，T 表示序列长度。权重形状与激活形状分别列示。",
+    "没有将运行 cache、激活或中间 SSM state 加入参数量。"
+  ],
+  "checks": {
+    "formulaTotal": 8100852736,
+    "method": "逐项 shape 乘积 × 重复次数；与官方权重 tensor shape 多重集合比较。",
+    "verified": "配置 + 官方实现 + checkpoint 元数据逐形状覆盖，精确总量相等。",
+    "notVerified": "未下载或执行完整模型；不验证数值推理输出。"
+  }
+}

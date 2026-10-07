@@ -1,0 +1,24 @@
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{execFileSync}=require('node:child_process');
+const root=__dirname,dist=path.join(root,'dist'),src=path.join(root,'src'),tr=path.join(src,'translations');
+const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const dict={...JSON.parse(fs.readFileSync(path.join(tr,'ui.json'),'utf8'))};
+for(const f of fs.readdirSync(tr).filter(f=>f.endsWith('-strings.json'))){const zh=JSON.parse(fs.readFileSync(path.join(tr,f),'utf8')),en=JSON.parse(fs.readFileSync(path.join(tr,f.replace('-strings','-en')),'utf8'));assert.equal(zh.length,en.length,f+' translation count');zh.forEach((s,i)=>{assert(!/[\u3400-\u9fff]/.test(en[i]),f+' untranslated entry');if(dict[s])assert.equal(dict[s],en[i],s);dict[s]=en[i]})}
+// Translate complete authored strings before UI fragments, retaining all numerical data and equations.
+const pairs=Object.entries(dict).sort((a,b)=>b[0].length-a[0].length);
+const translate=html=>{for(const [a,b] of pairs)html=html.split(esc(a)).join(esc(b));return html};
+fs.mkdirSync(path.join(dist,'models'),{recursive:true});
+execFileSync(process.execPath,[path.join(src,'render.cjs')],{stdio:'inherit'});
+execFileSync(process.execPath,[path.join(root,'build-home.cjs')],{stdio:'inherit'});
+const pages=['index.html',...fs.readdirSync(path.join(dist,'models')).filter(f=>f.endsWith('.html')).map(f=>'models/'+f)];
+const origin='https://open-model-atlas.molanlin0818.chatgpt.site';
+for(const page of pages){const original=fs.readFileSync(path.join(dist,page),'utf8');for(const lang of ['en','zh']){const isEn=lang==='en',rel=(isEn?'':'zh/')+page;let html=isEn?translate(original):original;html=html.replace('<html lang="zh-CN">',`<html lang="${isEn?'en':'zh-CN'}">`);
+if(isEn){const leftovers=html.match(/[\u3400-\u9fff][^<>\n]{0,100}/g);assert(!leftovers,JSON.stringify({page,leftovers}));}
+const alternate=page==='index.html'?(isEn?'zh/index.html':'../index.html'):(isEn?'../zh/'+page:'../../'+page);
+const nav=`<a class="language-switch" href="${alternate}" lang="${isEn?'zh-CN':'en'}" aria-label="${isEn?'Switch to Chinese':'切换为英文'}">${isEn?'中文':'English'}</a>`;
+html=html.replace('</style>',`.language-switch{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:7px 12px;border:1px solid #dce2ed;border-radius:8px;color:#43536f;background:white;text-decoration:none;font-size:12px;white-space:nowrap}.language-switch:focus-visible{outline:3px solid #5675e5;outline-offset:3px}header .tools{flex-wrap:wrap}@media(max-width:760px){header{gap:12px;flex-wrap:wrap}.tools{gap:6px}}</style>`);
+html=page==='index.html'?html.replace('</header>',nav+'</header>'):html.replace('<div class="tools">','<div class="tools">'+nav);
+html=html.replace('</head>',`<link rel="canonical" href="${origin}/${rel}"><link rel="alternate" hreflang="en" href="${origin}/${page}"><link rel="alternate" hreflang="zh-Hans" href="${origin}/zh/${page}"><link rel="alternate" hreflang="x-default" href="${origin}/${page}"></head>`);
+fs.mkdirSync(path.dirname(path.join(dist,rel)),{recursive:true});fs.writeFileSync(path.join(dist,rel),html);}}
+fs.writeFileSync(path.join(dist,'sitemap.xml'),'<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+pages.flatMap(p=>[p,'zh/'+p]).map(p=>`<url><loc>${origin}/${p}</loc></url>`).join('')+'</urlset>');
+fs.writeFileSync(path.join(dist,'robots.txt'),'User-agent: *\nAllow: /\nSitemap: '+origin+'/sitemap.xml\n');
+console.log('Built 18 static English/Chinese pages; default English.');

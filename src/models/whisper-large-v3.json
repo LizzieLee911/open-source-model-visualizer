@@ -1,0 +1,743 @@
+{
+  "id": "whisper-large-v3",
+  "name": "Whisper large-v3",
+  "company": "OpenAI",
+  "color": "#087f78",
+  "family": "Audio Encoder–Decoder / MHA",
+  "tagline": "音频编码与文字解码双塔，以 cross-attention 连接声音与文本。",
+  "checkpoint": "openai/whisper-large-v3",
+  "license": "MIT",
+  "summary": "按 OpenAI 原生 Whisper 的可学习参数口径统计：1,541,570,560。包含音频 Encoder、文字 Decoder、卷积与 learned embeddings；输出与输入 token embedding 共享，只计一次。",
+  "scope": "按 OpenAI 原生 Whisper 的可学习参数口径统计：1,541,570,560。包含音频 Encoder、文字 Decoder、卷积与 learned embeddings；输出与输入 token embedding 共享，只计一次。",
+  "totalParams": 1541570560,
+  "totalLabel": "1.541571B",
+  "activeLabel": null,
+  "sources": [
+    {
+      "label": "官方 checkpoint config",
+      "url": "https://huggingface.co/openai/whisper-large-v3/blob/06f233fe06e710322aca913c1bc4249a0d71fce1/config.json",
+      "revision": "06f233fe06e710322aca913c1bc4249a0d71fce1",
+      "usedFor": "全部结构超参数"
+    },
+    {
+      "label": "实现源码",
+      "url": "https://github.com/openai/whisper/blob/86098128c0b4f24f0e2aa2994de830614b474227/whisper/model.py",
+      "revision": "86098128c0b4f24f0e2aa2994de830614b474227",
+      "usedFor": "算子、偏置、归一化、共享权重及非参数状态"
+    },
+    {
+      "label": "官方 Safetensors 元数据",
+      "url": "https://huggingface.co/openai/whisper-large-v3/tree/06f233fe06e710322aca913c1bc4249a0d71fce1",
+      "revision": "06f233fe06e710322aca913c1bc4249a0d71fce1",
+      "usedFor": "通过 HTTP Range 只读取张量头，逐一核对形状与总和"
+    }
+  ],
+  "facts": [
+    {
+      "label": "Encoder / Decoder",
+      "value": "32 + 32 blocks"
+    },
+    {
+      "label": "隐藏维度",
+      "value": "1280"
+    },
+    {
+      "label": "Attention heads",
+      "value": "20 × 64"
+    },
+    {
+      "label": "Mel bins",
+      "value": "128"
+    },
+    {
+      "label": "可学习参数",
+      "value": "1,541,570,560"
+    },
+    {
+      "label": "固定位置 buffer",
+      "value": "1,920,000"
+    }
+  ],
+  "modules": [
+    {
+      "id": "audio",
+      "name": "音频预处理与卷积",
+      "repeat": "×1",
+      "kind": "main",
+      "summary": "16 kHz 波形转 128-bin log-Mel，再投影为音频序列。",
+      "flow": [
+        {
+          "label": "log-Mel",
+          "shape": "[B,128,3000]",
+          "detail": "标准 30 秒窗口；特征提取无模型参数。"
+        },
+        {
+          "label": "Conv1d + GELU",
+          "shape": "[B,1280,3000]",
+          "detail": "128→1280，kernel=3，stride=1，padding=1。"
+        },
+        {
+          "label": "Conv1d + GELU → transpose",
+          "shape": "[B,1500,1280]",
+          "detail": "1280→1280，kernel=3，stride=2，padding=1。"
+        },
+        {
+          "label": "加固定正弦位置编码",
+          "shape": "[B,1500,1280]",
+          "detail": "1500×1280 为 buffer；不纳入可学习参数。"
+        }
+      ],
+      "notes": [],
+      "weights": [
+        {
+          "name": "model.encoder.conv1.bias",
+          "shape": [
+            1280
+          ],
+          "count": 1,
+          "category": "audio",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.conv1.weight",
+          "shape": [
+            1280,
+            128,
+            3
+          ],
+          "count": 1,
+          "category": "audio",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.conv2.bias",
+          "shape": [
+            1280
+          ],
+          "count": 1,
+          "category": "audio",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.conv2.weight",
+          "shape": [
+            1280,
+            1280,
+            3
+          ],
+          "count": 1,
+          "category": "audio",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "branches": []
+    },
+    {
+      "id": "encoder",
+      "name": "音频 Encoder block",
+      "repeat": "×32",
+      "kind": "main",
+      "summary": "非因果 self-attention 与 GELU FFN，双 pre-LayerNorm 残差。",
+      "flow": [
+        {
+          "label": "LayerNorm → Q/K/V",
+          "shape": "[B,20,1500,64]",
+          "detail": "每个投影 1280→1280；Q/V 有 bias，K 无 bias。"
+        },
+        {
+          "label": "双向 self-attention → O + 残差",
+          "shape": "[B,1500,1280]",
+          "detail": "20 heads ×64；O 有 bias。"
+        },
+        {
+          "label": "LayerNorm → fc1 → GELU → fc2 + 残差",
+          "shape": "[B,1500,1280]",
+          "detail": "1280→5120→1280，两个 Linear 均有 bias。"
+        }
+      ],
+      "notes": [],
+      "weights": [
+        {
+          "name": "model.encoder.layers.*.fc1.bias",
+          "shape": [
+            5120
+          ],
+          "count": 32,
+          "category": "encoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.layers.*.fc1.weight",
+          "shape": [
+            5120,
+            1280
+          ],
+          "count": 32,
+          "category": "encoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.layers.*.fc2.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "encoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.layers.*.fc2.weight",
+          "shape": [
+            1280,
+            5120
+          ],
+          "count": 32,
+          "category": "encoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.layers.*.final_layer_norm.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "encoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.layers.*.final_layer_norm.weight",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "encoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.layers.*.self_attn.k_proj.weight",
+          "shape": [
+            1280,
+            1280
+          ],
+          "count": 32,
+          "category": "encoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.layers.*.self_attn.out_proj.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "encoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.layers.*.self_attn.out_proj.weight",
+          "shape": [
+            1280,
+            1280
+          ],
+          "count": 32,
+          "category": "encoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.layers.*.self_attn.q_proj.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "encoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.layers.*.self_attn.q_proj.weight",
+          "shape": [
+            1280,
+            1280
+          ],
+          "count": 32,
+          "category": "encoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.layers.*.self_attn.v_proj.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "encoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.layers.*.self_attn.v_proj.weight",
+          "shape": [
+            1280,
+            1280
+          ],
+          "count": 32,
+          "category": "encoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.layers.*.self_attn_layer_norm.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "encoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.layers.*.self_attn_layer_norm.weight",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "encoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "branches": []
+    },
+    {
+      "id": "encoder-norm",
+      "name": "音频最终 LayerNorm",
+      "repeat": "×1",
+      "kind": "main",
+      "summary": "编码后的音频作为每层 decoder cross-attention 的 K/V 输入。",
+      "flow": [
+        {
+          "label": "LayerNorm",
+          "shape": "[B,1500,1280]",
+          "detail": "gamma/beta 各1280。"
+        }
+      ],
+      "notes": [],
+      "weights": [
+        {
+          "name": "model.encoder.layer_norm.bias",
+          "shape": [
+            1280
+          ],
+          "count": 1,
+          "category": "encoder-norm",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.encoder.layer_norm.weight",
+          "shape": [
+            1280
+          ],
+          "count": 1,
+          "category": "encoder-norm",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "branches": []
+    },
+    {
+      "id": "embedding",
+      "name": "文字与位置 embedding",
+      "repeat": "×1",
+      "kind": "main",
+      "summary": "文字 token 和可学习位置编码相加。",
+      "flow": [
+        {
+          "label": "token lookup",
+          "shape": "[B,T,1280]",
+          "detail": "51866×1280；同时用于最终输出投影。"
+        },
+        {
+          "label": "加 learned position embedding",
+          "shape": "[B,T,1280]",
+          "detail": "448×1280；T≤448。"
+        }
+      ],
+      "notes": [],
+      "weights": [
+        {
+          "name": "model.decoder.embed_positions.weight",
+          "shape": [
+            448,
+            1280
+          ],
+          "count": 1,
+          "category": "embedding",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.embed_tokens.weight",
+          "shape": [
+            51866,
+            1280
+          ],
+          "count": 1,
+          "category": "embedding",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "branches": []
+    },
+    {
+      "id": "decoder",
+      "name": "文字 Decoder block",
+      "repeat": "×32",
+      "kind": "main",
+      "summary": "三段 pre-LayerNorm 残差：因果 self-attention、cross-attention、FFN。",
+      "flow": [
+        {
+          "label": "LayerNorm → causal self-attention + 残差",
+          "shape": "[B,T,1280]",
+          "detail": "Q/K/V/O 全为1280→1280；20 heads×64；仅 K 无 bias。"
+        },
+        {
+          "label": "LayerNorm → cross-attention + 残差",
+          "shape": "Q:[B,20,T,64]; K/V:[B,20,1500,64]",
+          "detail": "Q 来自当前文字；K/V 来自音频最终表示。Q/K/V/O 每项1280→1280；仅 K 无 bias。"
+        },
+        {
+          "label": "LayerNorm → fc1 → GELU → fc2 + 残差",
+          "shape": "[B,T,1280]",
+          "detail": "1280→5120→1280，两个 Linear 均有 bias。"
+        }
+      ],
+      "notes": [],
+      "weights": [
+        {
+          "name": "model.decoder.layers.*.encoder_attn.k_proj.weight",
+          "shape": [
+            1280,
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.encoder_attn.out_proj.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.encoder_attn.out_proj.weight",
+          "shape": [
+            1280,
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.encoder_attn.q_proj.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.encoder_attn.q_proj.weight",
+          "shape": [
+            1280,
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.encoder_attn.v_proj.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.encoder_attn.v_proj.weight",
+          "shape": [
+            1280,
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.encoder_attn_layer_norm.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.encoder_attn_layer_norm.weight",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.fc1.bias",
+          "shape": [
+            5120
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.fc1.weight",
+          "shape": [
+            5120,
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.fc2.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.fc2.weight",
+          "shape": [
+            1280,
+            5120
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.final_layer_norm.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.final_layer_norm.weight",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.self_attn.k_proj.weight",
+          "shape": [
+            1280,
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.self_attn.out_proj.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.self_attn.out_proj.weight",
+          "shape": [
+            1280,
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.self_attn.q_proj.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.self_attn.q_proj.weight",
+          "shape": [
+            1280,
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.self_attn.v_proj.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.self_attn.v_proj.weight",
+          "shape": [
+            1280,
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.self_attn_layer_norm.bias",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layers.*.self_attn_layer_norm.weight",
+          "shape": [
+            1280
+          ],
+          "count": 32,
+          "category": "decoder",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "branches": []
+    },
+    {
+      "id": "head",
+      "name": "最终 LayerNorm 与共享输出",
+      "repeat": "×1",
+      "kind": "main",
+      "summary": "直接用 token embedding 的转置计算 logits。",
+      "flow": [
+        {
+          "label": "LayerNorm",
+          "shape": "[B,T,1280]",
+          "detail": "gamma/beta 各1280。"
+        },
+        {
+          "label": "共享 token_embedding.T",
+          "shape": "[B,T,51866]",
+          "detail": "输出不新增参数，没有 output bias；embedding 已在输入模块计数。"
+        }
+      ],
+      "notes": [],
+      "weights": [
+        {
+          "name": "model.decoder.layer_norm.bias",
+          "shape": [
+            1280
+          ],
+          "count": 1,
+          "category": "head",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        },
+        {
+          "name": "model.decoder.layer_norm.weight",
+          "shape": [
+            1280
+          ],
+          "count": 1,
+          "category": "head",
+          "note": "权重按文件原始维度；Linear 为 [out,in]，bias 为输出向量；* 表示重复索引。"
+        }
+      ],
+      "sourceIds": [
+        0,
+        1,
+        2
+      ],
+      "branches": []
+    }
+  ],
+  "connections": [
+    [
+      "audio",
+      "encoder"
+    ],
+    [
+      "encoder",
+      "encoder-norm"
+    ],
+    [
+      "encoder-norm",
+      "decoder"
+    ],
+    [
+      "embedding",
+      "decoder"
+    ],
+    [
+      "decoder",
+      "head"
+    ]
+  ],
+  "notes": [
+    "官方 HF safetensors 存储张量元素共 1,543,490,560，其中 1,920,000 为固定音频正弦位置编码；原生 OpenAI 实现将其注册为 buffer，故不算可学习参数。",
+    "预处理 STFT、Mel filters、log、GELU、softmax、mask、固定位置编码与 KV cache 不计参数。",
+    "HF checkpoint 名称用于核对维度；原生 OpenAI 实现决定可学习参数口径。",
+    "标准音频输入窗口为 30 秒；长音频由外部切片/转录流程处理，不是多套 encoder 权重。"
+  ],
+  "checks": {
+    "formulaTotal": 1541570560,
+    "method": "每个矩阵/向量的 prod(shape) × count，聚合清单与官方 safetensors header 完整匹配。",
+    "verified": "已下载配置、固定版本源码及仅张量头；check.py 校验覆盖率、每项形状和总数。",
+    "notVerified": "未下载大权重、未运行完整推理。"
+  }
+}
