@@ -1,8 +1,12 @@
-# Open Model Atlas
+# 🧩 Open-Source AI Model Visualizer
 
 Detailed, interactive architecture breakdowns of open-weight models, covering computational paths, tensor shapes, parameter counts, and component boundaries. English is the default language; a Chinese version is available on every page.
 
-[Explore the atlas](https://open-model-atlas.molanlin0818.chatgpt.site)
+[Explore the visualizer](https://open-model-atlas.molanlin0818.chatgpt.site)
+
+![English interface showing the DeepSeek-V3 architecture and expanded Dense SwiGLU FFN module](docs/deepseek-v3-english.png)
+
+Use **Language** in the top-right corner to switch between **English** and **中文** on any page.
 
 | Model | Architecture |
 | --- | --- |
